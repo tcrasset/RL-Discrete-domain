@@ -2,7 +2,7 @@ import math
 import numpy as np
 import random
 import os.path
-
+from matplotlib import pyplot as plt
 # CONSTANTS
 UP = (-1, 0)
 DOWN = (1, 0)
@@ -84,6 +84,17 @@ def rewardAtPosition(reward_matrix, coords):
     - integer reward
     """
     return reward_matrix[coords]
+
+def rewardGivenAction(reward_matrix, state, action, beta, w):
+    dim_x = reward_matrix.shape[0]
+    dim_y = reward_matrix.shape[1]
+    
+    if(w <= 1- beta):
+        next_state = dynamics(state, action, dim_x, dim_y)
+    else:
+        next_state = (0,0)
+
+    return rewardAtPosition(reward_matrix, next_state)
 
 
 def dynamics(curr, action, dim_x, dim_y):
@@ -192,6 +203,8 @@ def computeQ(reward_matrix, discount, N, beta = 0):
     Keys are actions and values are cumulative expected reward matrices
     with the same shape as `reward_matrix`
     """
+    dim_x = reward_matrix.shape[0]
+    dim_y = reward_matrix.shape[1]
     current_Q_dict = {}
     for u in ACTIONS:
         current_Q_dict[u] = np.zeros_like(reward_matrix, dtype=float)
@@ -199,19 +212,19 @@ def computeQ(reward_matrix, discount, N, beta = 0):
     # Compute the whole probability grid for every current_state , next_state pair
     # for a given action
     for it in range(N):
-        print("N = {}".format(it))
+        # print("N = {}".format(it))
         previous_Q_dict = current_Q_dict
 
-        for current_x in range(reward_matrix.shape[0]):
-            for current_y in range(reward_matrix.shape[1]):
+        for current_x in range(dim_x):
+            for current_y in range(dim_y):
                 current_state = (current_x, current_y)
                 for u in ACTIONS:
                     prob_dict = computeProba(u, reward_matrix, beta)
                     expectation = 0
 
                     # Compute the expectation of the reward of previous states
-                    for next_x in range(reward_matrix.shape[0]):
-                        for next_y in range(reward_matrix.shape[1]):
+                    for next_x in range(dim_x):
+                        for next_y in range(dim_y):
                             next_state = (next_x, next_y)
 
                             # Finding maximum cumulative reward of the previous iteration
@@ -221,7 +234,7 @@ def computeQ(reward_matrix, discount, N, beta = 0):
                                 if current_Q[next_state] > max_reward:
                                     max_reward = previous_Q_dict[u_prime][next_state]
 
-                            expectation += prob_dict[current_state][next_state] * max_reward
+                            expectation += prob_dict[current_state][next_state] * max_reward    
 
                     reward = expectedReward(current_state, u, reward_matrix, beta)
                     current_Q_dict[u][current_state] = reward + discount * expectation
@@ -245,6 +258,8 @@ def createTrajectory(N, reward_matrix, beta=0):
     ----------
     - List containing the trajectory
     """
+    dim_x = reward_matrix.shape[0]
+    dim_y = reward_matrix.shape[1]
 
     # Creating trajectory h from a list of ACTIONS and a starting state
     h_start = (random.randint(0,4), random.randint(0,4))
@@ -254,96 +269,131 @@ def createTrajectory(N, reward_matrix, beta=0):
 
     # First iteration
     h.append(h_start)
-    h.append(h_ACTIONS[0])
-    h.append(rewardAtPosition(reward_matrix, h_start))
 
     # Successive iterations
-    dim_x = reward_matrix.shape[0]
-    dim_y = reward_matrix.shape[1]
-    for u in h_ACTIONS[1:]:
+    for u in h_ACTIONS:
         w = random.random()
         if(w <= 1- beta):
-            next_state = dynamics(h[-3], u, dim_x, dim_y)
+            next_state = dynamics(h[-1], u, dim_x, dim_y)
         else:
             next_state = (0,0)
-        h.append(next_state)
         h.append(u)
-        h.append(rewardAtPosition(reward_matrix, h[-2]))
-    h = h[:-2]
+        h.append(rewardAtPosition(reward_matrix, next_state))
+        h.append(next_state)
     return h
 
 
-def computeAverageReward(N, reward_matrix):
+def computeAverageReward(N, reward_matrix, beta=0):
     """
     Computes a good approximation of the reward r(x,u) from the trajectory h
+    h is of the form (state_0, action0, reward_0, ..., state_N)
 
     Arguments:
     ----------
     - N : length of the trajectory
     - reward_matrix: matrix containing the rewards for each cell
+    - beta: probability threshold for stochastic dynamics
 
     Returns:
     ----------
     - List containing the trajectory
     """
-    nb_occurences = np.zeros_like(reward_matrix, dtype=int)
-    reward_sum = np.zeros_like(reward_matrix, dtype=int)
+    nb_occurences = {}
+    reward_sum = {}
+    average_reward = {}
+    convergence_diff = []
+    convergence_nbpoints = 0
 
-    traj = createTrajectory(N, reward_matrix, beta)
-    i = 0
-    while i < (len(traj) -1):
-        nb_occurences[traj[i]] += 1
-        reward_sum[traj[i]] += traj[i + 2]  
-        i = i + 3
+    for u in ACTIONS:
+        nb_occurences[u] = np.zeros_like(reward_matrix, dtype=int)
+        reward_sum[u] = np.zeros_like(reward_matrix, dtype=int)
+        average_reward[u] = np.zeros_like(reward_matrix, dtype=int)
+
+    # Create 1000 trajectories and compute the average reward
+    # of each state
+    for nb_traj in range(1000):
+        traj = createTrajectory(N, reward_matrix, beta)
+        i = 0
+        while i < (len(traj) -1):
+            nb_occurences[traj[i+1]][traj[i]] += 1
+            reward_sum[traj[i+1]][traj[i]] += traj[i + 2]  
+            i = i + 3
+
+    #     # Compute convergence
+    #     convergence_nbpoints += 1
+    #     all_state_diff = np.zeros_like(reward_matrix, dtype=float)
+    #     for x in range(reward_matrix.shape[0]):
+    #         for y in range(reward_matrix.shape[1]):
+    #             approx_reward = np.nan_to_num(np.divide(reward_sum[DOWN], nb_occurences[DOWN]), False)
+    #             true_reward = expectedReward((x,y), DOWN, reward_matrix, beta)
+    #             all_state_diff = abs(approx_reward - true_reward)
+    #     convergence_diff.append(np.amax(all_state_diff))
+
+    # plt.plot(range(convergence_nbpoints), convergence_diff)
+    # plt.show()
 
     np.seterr(divide='ignore')
-    return np.nan_to_num(np.divide(reward_sum, nb_occurences), False)
+    for u in ACTIONS:
+        average_reward[u] = np.nan_to_num(np.divide(reward_sum[u], nb_occurences[u]), False)
+    return average_reward
 
 
-def computeAverageProbability(N, reward_matrix):
+def computeAverageProbability(N, reward_matrix, beta=0):
     """
     Computes a good approximation of the probability p(x'| x,u) from the trajectory h
+    h is of the form (state_0, action0, reward_0, ..., state_N)
 
     Arguments:
     ----------
     - N : length of the trajectory
     - reward_matrix: matrix containing the rewards for each cell
+    - beta: probability threshold for stochastic dynamics
 
     Returns:
     ----------
     - List containing the trajectory
     """
+
     dim_x = reward_matrix.shape[0]
     dim_y = reward_matrix.shape[1]
     nb_times_from_curr_to_next = {}
     nb_times_through_curr = {}
     average_prob = {}
 
+    # Init
     for x in range(dim_x):
         for y in range(dim_y):
-            nb_times_from_curr_to_next[(x,y)] = np.zeros_like(reward_matrix, dtype=int)
-            nb_times_through_curr[(x,y)] = 0
-    traj = createTrajectory(N, reward_matrix, beta)
+            for u in ACTIONS:
+                nb_times_from_curr_to_next[((x,y),u)] = np.zeros_like(reward_matrix, dtype=int) 
+                nb_times_through_curr[((x,y),u)] = 0
+                average_prob[((x,y),u)] = np.zeros_like(reward_matrix, dtype=int)
 
-    i = 0
-    while i < (len(traj) - 1):
-        nb_times_from_curr_to_next[traj[i]][traj[i + 3]] += 1
-        nb_times_through_curr[traj[i]] += 1
-        i = i + 3
-        
+    # Create 1000 trajectories and compute the number of times we pass through 
+    # different states and where we came from to reach those
+    for nb_traj in range(1000):
+        traj = createTrajectory(N, reward_matrix, beta)
+        i = 0
+        while i < (len(traj) - 1):
+            nb_times_from_curr_to_next[(traj[i], traj[i+1])][traj[i + 3]] += 1
+            nb_times_through_curr[(traj[i], traj[i+1])] += 1
+            i = i + 3
+
+    # Compute average probability for each state
     for x in range(dim_x):
         for y in range(dim_y):
-
-            np.seterr(divide='ignore')
-            average_prob[(x,y)] = np.nan_to_num(np.divide(nb_times_from_curr_to_next[(x,y)], nb_times_through_curr[(x,y)]), False)
+            for u in ACTIONS:
+                np.seterr(divide='ignore')
+                average_prob[((x,y),u)] = np.nan_to_num(np.divide(nb_times_from_curr_to_next[((x,y),u)], 
+                                                                nb_times_through_curr[((x,y),u)]), False)
     return average_prob
 
 
 
 def computeQApproximation(average_prob, average_reward, reward_matrix, discount, N):
     """
-    Computes the cumulative expected reward for state action pairs
-    Add the beta parameter to use a stochastic approach
+    Computes an approximation of the cumulative expected reward 
+    for state action pairs.
+    Add the beta parameter to use a stochastic approach.
     Without it, a deterministic approach is chosen.
     Arguments:
     ----------
@@ -352,9 +402,9 @@ def computeQApproximation(average_prob, average_reward, reward_matrix, discount,
     - N : number of iterations to perform
     Returns:
     ----------
-    - Dictionnary containing entries for each different action
+    - Dictionnary containing entries for each different action.
     Keys are actions and values are cumulative expected reward matrices
-    with the same shape as `reward_matrix`
+    with the same shape as `reward_matrix`.
     """
     dim_x = reward_matrix.shape[0]
     dim_y = reward_matrix.shape[1]
@@ -366,37 +416,37 @@ def computeQApproximation(average_prob, average_reward, reward_matrix, discount,
     # Compute the whole probability grid for every current_state , next_state pair
     # for a given action
     for it in range(N):
-        print("N = {}".format(it))
+        # print("N = {}".format(it))
         previous_Q_dict = current_Q_dict
 
         for current_x in range(dim_x):
             for current_y in range(dim_y):
                 current_state = (current_x, current_y)
                 for u in ACTIONS:
-                    expectation = 0
+                    Q_sum = 0
 
-                    # Compute the expectation of the reward of previous states
+                    # Compute the sum over all states of the reward of previous states
                     for next_x in range(dim_x):
                         for next_y in range(dim_y):
                             next_state = (next_x, next_y)
 
                             # Finding maximum cumulative reward of the previous iteration
-                            max_reward = -math.inf
-                            for u_prime in ACTIONS:
-                                current_Q = current_Q_dict[u_prime]
-                                # print("Next state {} iteration {} action {} reward {}".format(next_state, it, u_prime, current_Q[next_state]))
-                                if current_Q[next_state] > max_reward:
-                                    max_reward = previous_Q_dict[u_prime][next_state]
+                            if(average_prob[(current_state,u)][next_state] != 0.0):
+                                max_reward = -math.inf
+                                for u_prime in ACTIONS:
+                                    current_Q = current_Q_dict[u_prime]
+                                    if current_Q[next_state] > max_reward:
+                                        max_reward = previous_Q_dict[u_prime][next_state]
 
-                            expectation += average_prob[current_state][next_state] * max_reward
+                                Q_sum += average_prob[(current_state,u)][next_state] * max_reward
 
-                    reward = average_reward[dynamics(current_state, u, dim_x, dim_y)]
-                    current_Q_dict[u][current_state] = reward + discount * expectation
+                    reward = average_reward[u][current_state]
+                    current_Q_dict[u][current_state] = reward + discount * Q_sum
     return current_Q_dict
 
-def getOptimalPolicy(Q):
+def computePolicy(Q):
     """
-    Computes the optimal policy from the state action value function
+    Computes the policy from the state action value function
 
     Arguments:
     ----------
@@ -405,8 +455,8 @@ def getOptimalPolicy(Q):
     --------
     Dictionnary with states as keys and actions as values
     """
-    # Optimal policy from the reccurence equation Q
-    optimal_policy = {}
+    # Policy from the reccurence equation Q
+    policy = {}
     dim_x = Q[UP].shape[0]
     dim_y = Q[UP].shape[1]
     for x in range(dim_x):
@@ -418,19 +468,18 @@ def getOptimalPolicy(Q):
                 if(reward > max_reward):
                     max_reward = reward
                     best_action = u
-            optimal_policy[(x,y)] = best_action
-    for i in optimal_policy:
-        if optimal_policy[i] == UP:
-            print("{} : UP".format(i))
-        elif optimal_policy[i] == DOWN:
-            print("{} : DOWN".format(i))
-        elif optimal_policy[i] == LEFT:
-            print("{} : LEFT".format(i))
-        elif optimal_policy[i] == RIGHT:
-            print("{} : RIGHT".format(i))
-    return optimal_policy
-
-
+            policy[(x,y)] = best_action
+    # # Printing
+    # for i in policy:
+    #     if policy[i] == UP:
+    #         print("{} : UP".format(i))
+    #     elif policy[i] == DOWN:
+    #         print("{} : DOWN".format(i))
+    #     elif policy[i] == LEFT:
+    #         print("{} : LEFT".format(i))
+    #     elif policy[i] == RIGHT:
+    #         print("{} : RIGHT".format(i))
+    return policy
 
 
 if __name__ == '__main__':
@@ -451,7 +500,8 @@ if __name__ == '__main__':
     RECOMPUTE = True
     discount = 0.99
     beta = 0
-    N = 10000
+    N_opt = 1000
+    N_approx = 5000
 
     """Expected return of a policy - QUESTION 3"""
     # dim_x = reward_matrix.shape[0]
@@ -470,84 +520,97 @@ if __name__ == '__main__':
 
     """Optimal policy - QUESTION 4"""
 
-    # # Initialization
-    # current_Q_dict = {}
-    # for u in ACTIONS:
-    #     current_Q_dict[u] = np.zeros_like(reward_matrix, dtype=float)
+    # Initialization
+    current_Q_dict = {}
+    for u in ACTIONS:
+        current_Q_dict[u] = np.zeros_like(reward_matrix, dtype=float)
 
-    # # Save Q matrices in a file so as to not recompute it everytime
-    # if (os.path.exists('./Q_UP.npy') and not RECOMPUTE):
-    #     print("Loading from file...")
-    #     current_Q_dict[UP] = np.load('Q_UP.npy')
-    #     current_Q_dict[DOWN] = np.load('Q_DOWN.npy')
-    #     current_Q_dict[LEFT] = np.load('Q_LEFT.npy')
-    #     current_Q_dict[RIGHT] = np.load('Q_RIGHT.npy')
-    # else:
-    #     current_Q_dict = computeQ(reward_matrix, discount, N, beta)
-    #     np.save('Q_UP.npy', current_Q_dict[UP])
-    #     np.save('Q_DOWN.npy', current_Q_dict[DOWN])
-    #     np.save('Q_LEFT.npy', current_Q_dict[LEFT])
-    #     np.save('Q_RIGHT.npy', current_Q_dict[RIGHT])
+    # Save Q matrices in a file so as to not recompute it everytime
+    if (os.path.exists('./Q_UP.npy') and not RECOMPUTE):
+        print("Loading from file...")
+        current_Q_dict[UP] = np.load('Q_UP.npy')
+        current_Q_dict[DOWN] = np.load('Q_DOWN.npy')
+        current_Q_dict[LEFT] = np.load('Q_LEFT.npy')
+        current_Q_dict[RIGHT] = np.load('Q_RIGHT.npy')
+    else:
+        current_Q_dict = computeQ(reward_matrix, discount, N_opt, beta)
+        np.save('Q_UP.npy', current_Q_dict[UP])
+        np.save('Q_DOWN.npy', current_Q_dict[DOWN])
+        np.save('Q_LEFT.npy', current_Q_dict[LEFT])
+        np.save('Q_RIGHT.npy', current_Q_dict[RIGHT])
 
     # print("UP\n",current_Q_dict[UP])
     # print("DOWN\n",current_Q_dict[DOWN])
     # print("LEFT\n",current_Q_dict[LEFT])
-    # print("RIGHT\n",current_Q_dict[UP])
+    # print("RIGHT\n",current_Q_dict[RIGHT])
 
-    # optimal_policy = getOptimalPolicy(current_Q_dict)
-
-    # print(computeJ(optimal_policy, reward_matrix, discount, 10000))
+    optimal_policy = computePolicy(current_Q_dict)
+    print("QUESTION 4: Value function\n",computeJ(optimal_policy, reward_matrix, discount, 10000))
 
 
     """System identification - QUESTION 5"""
 
-    # #Compute average probability and reward with a trajectory
-    # # of length 100000
-    # average_prob = {}
-    # average_reward = {}
-    # # Save average matrices in a file so as to not recompute it everytime
-    # if (os.path.exists('./average_prob.npy') and not RECOMPUTE):
-    #     #Load
-    #     average_prob = np.load('./average_prob.npy')
-    #     average_reward = np.load('./average_reward.npy')
-    #     average_prob = average_prob.item()
-    # else:
-    #     average_prob = computeAverageProbability(100000, reward_matrix)
-    #     average_reward = computeAverageReward(100000, reward_matrix)
-    #     # Save
-    #     np.save('average_prob.npy', average_prob) 
-    #     np.save('average_reward.npy', average_reward) 
+    # Compute average probability and reward with 1000 trajectories
+    # each of length 1000
+    average_prob = {}
+    average_reward = {}
+    # Save average matrices in a file so as to not recompute it everytime
+    if (os.path.exists('./average_prob.npy') and not RECOMPUTE):
+        #Load
+        average_prob = np.load('./average_prob.npy')
+        average_reward = np.load('./average_reward.npy')
+        average_prob = average_prob.item()
+    else:
+        average_prob = computeAverageProbability(1000, reward_matrix, beta)
+        average_reward = computeAverageReward(1000, reward_matrix, beta)
+        # Save
+        np.save('average_prob.npy', average_prob) 
+        np.save('average_reward.npy', average_reward) 
 
     # # Printing
     # for i in average_prob:
     #     print("Starting from {}:\n{}".format(i,average_prob[i]))
     # print(average_reward)
 
-    # # Init
-    # current_Q_dict_approx = {}
-    # for u in ACTIONS:
-    #     current_Q_dict_approx[u] = np.zeros_like(reward_matrix, dtype=float)
+    # Init
+    current_Q_dict_approx = {}
+    for u in ACTIONS:
+        current_Q_dict_approx[u] = np.zeros_like(reward_matrix, dtype=float)
 
-    # # Save Q matrices in a file so as to not recompute it everytime
-    # if (os.path.exists('./Q_UP_approx.npy') and not RECOMPUTE):
-    #     #LOAD
-    #     current_Q_dict_approx[UP] = np.load('Q_UP_approx.npy')
-    #     current_Q_dict_approx[DOWN] = np.load('Q_DOWN_approx.npy')
-    #     current_Q_dict_approx[LEFT] = np.load('Q_LEFT_approx.npy')
-    #     current_Q_dict_approx[RIGHT] = np.load('Q_RIGHT_approx.npy')
-    # else:
-    #     #SAVE
-    #     current_Q_dict_approx = computeQApproximation(average_prob, average_reward, reward_matrix, discount, N)
-    #     np.save('Q_UP_approx.npy', current_Q_dict_approx[UP])
-    #     np.save('Q_DOWN_approx.npy', current_Q_dict_approx[DOWN])
-    #     np.save('Q_LEFT_approx.npy', current_Q_dict_approx[LEFT])
-    #     np.save('Q_RIGHT_approx.npy', current_Q_dict_approx[RIGHT])
+    # Save Q matrices in a file so as to not recompute it everytime
+    if (os.path.exists('./Q_UP_approx.npy') and not RECOMPUTE):
+        #LOAD
+        print("Loading from file...")
+        current_Q_dict_approx[UP] = np.load('Q_UP_approx.npy')
+        current_Q_dict_approx[DOWN] = np.load('Q_DOWN_approx.npy')
+        current_Q_dict_approx[LEFT] = np.load('Q_LEFT_approx.npy')
+        current_Q_dict_approx[RIGHT] = np.load('Q_RIGHT_approx.npy')
+    else:
+        #SAVE
+        current_Q_dict_approx = computeQApproximation(average_prob, average_reward, reward_matrix, discount, N_approx)
+        np.save('Q_UP_approx.npy', current_Q_dict_approx[UP])
+        np.save('Q_DOWN_approx.npy', current_Q_dict_approx[DOWN])
+        np.save('Q_LEFT_approx.npy', current_Q_dict_approx[LEFT])
+        np.save('Q_RIGHT_approx.npy', current_Q_dict_approx[RIGHT])
 
-    # # Printing
+    
+    # print("State value function Q for every action:")
     # print("UP\n", current_Q_dict_approx[UP])
     # print("DOWN\n", current_Q_dict_approx[DOWN])
     # print("LEFT\n", current_Q_dict_approx[LEFT])
-    # print("RIGHT\n", current_Q_dict_approx[UP])
+    # print("RIGHT\n", current_Q_dict_approx[RIGHT])
     
-    # optimal_policy_approximation = getOptimalPolicy(current_Q_dict_approx)
+    optimal_policy_approximation = computePolicy(current_Q_dict_approx)
+    # # Printing
+    # for i in optimal_policy_approximation:
+    #     if optimal_policy_approximation[i] == UP:
+    #         print("{} : UP".format(i))
+    #     elif optimal_policy_approximation[i] == DOWN:
+    #         print("{} : DOWN".format(i))
+    #     elif optimal_policy_approximation[i] == LEFT:
+    #         print("{} : LEFT".format(i))
+    #     elif optimal_policy_approximation[i] == RIGHT:
+    #         print("{} : RIGHT".format(i))    
+    print("QUESTION 5: Value function approximation\n",computeJ(optimal_policy_approximation, reward_matrix, discount, 10000))
+
 
